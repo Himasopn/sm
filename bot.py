@@ -10,63 +10,59 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ── ENV VARS ──────────────────────────────────────────────────────────────────
-BOT_TOKEN  = os.environ["TELEGRAM_BOT_TOKEN"]   # set in Heroku Config Vars
-CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]  # numeric id e.g. -1001234567890
-CR_API_TOKEN = os.environ.get("CR_API_TOKEN", "R1dPNEVBlIlFb3Rvggja2uNf3eMi3pfU3GMfFqBkGmGjGiLZoo=")
+BOT_TOKEN    = os.environ["TELEGRAM_BOT_TOKEN"]
+CHANNEL_ID   = os.environ["TELEGRAM_CHANNEL_ID"]
+CR_API_TOKEN = os.environ["CR_API_TOKEN"]
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
-API_URL      = "http://147.135.212.197/crapi/time/viewstats"
-POLL_SECONDS = 5
-FETCH_RECORDS = 50   # how many latest records to check each cycle
+API_URL       = "http://147.135.212.197/crapi/time/viewstats"
+POLL_SECONDS  = 5
+FETCH_RECORDS = 50
 
 # ── STATE ─────────────────────────────────────────────────────────────────────
-seen_ids: set = set()   # stores "dt|num|message" fingerprints already sent
+seen: set = set()   # fingerprints of already-sent OTPs
 
-# ── HELPERS ───────────────────────────────────────────────────────────────────
 
-def fetch_otps() -> list[dict]:
-    """Pull latest records from the CR API."""
+def fetch_otps() -> list:
+    """Fetch latest records from CR API — no date filter needed."""
     params = {
         "token":   CR_API_TOKEN,
         "records": FETCH_RECORDS,
     }
     try:
-        resp = requests.get(API_URL, params=params, timeout=10)
+        resp = requests.get(API_URL, params=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
         if data.get("status") == "success":
             return data.get("data", [])
-        else:
-            log.warning("API error: %s", data.get("msg", "unknown"))
+        log.warning("API error: %s", data.get("msg", "unknown"))
     except Exception as e:
-        log.error("fetch_otps error: %s", e)
+        log.error("fetch_otps failed: %s", e)
     return []
 
 
 def send_telegram(text: str) -> bool:
-    """Send a message to the configured Telegram channel."""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id":    CHANNEL_ID,
-        "text":       text,
-        "parse_mode": "HTML",
-    }
     try:
-        resp = requests.post(url, json=payload, timeout=10)
+        resp = requests.post(url, json={
+            "chat_id":    CHANNEL_ID,
+            "text":       text,
+            "parse_mode": "HTML",
+        }, timeout=15)
         resp.raise_for_status()
         return True
     except Exception as e:
-        log.error("send_telegram error: %s", e)
+        log.error("Telegram send failed: %s", e)
         return False
 
 
-def make_fingerprint(entry: dict) -> str:
+def fingerprint(entry: dict) -> str:
     return f"{entry.get('dt')}|{entry.get('num')}|{entry.get('message')}"
 
 
 def format_message(entry: dict) -> str:
     return (
-        f"📩 <b>New OTP Received</b>\n"
+        "📩 <b>New OTP</b>\n"
         f"🕐 <b>Time:</b> {entry.get('dt', 'N/A')}\n"
         f"📱 <b>Number:</b> <code>{entry.get('num', 'N/A')}</code>\n"
         f"🔖 <b>Sender:</b> {entry.get('cli', 'N/A')}\n"
@@ -75,34 +71,29 @@ def format_message(entry: dict) -> str:
     )
 
 
-# ── MAIN LOOP ─────────────────────────────────────────────────────────────────
-
 def main():
-    log.info("Bot started. Polling every %ds …", POLL_SECONDS)
+    log.info("🤖 Bot started. Polling every %ds ...", POLL_SECONDS)
 
-    # ── Prime the seen-set on first run so we don't spam old messages ──────────
+    # ── Prime on startup: mark existing records as seen, don't send them ──────
     initial = fetch_otps()
     for entry in initial:
-        seen_ids.add(make_fingerprint(entry))
-    log.info("Primed with %d existing records.", len(seen_ids))
+        seen.add(fingerprint(entry))
+    log.info("Primed %d existing records. Waiting for new OTPs...", len(seen))
 
+    # ── Main poll loop ─────────────────────────────────────────────────────────
     while True:
         time.sleep(POLL_SECONDS)
         records = fetch_otps()
 
-        new_entries = []
-        for entry in records:
-            fp = make_fingerprint(entry)
-            if fp not in seen_ids:
-                new_entries.append(entry)
-                seen_ids.add(fp)
+        new = [r for r in records if fingerprint(r) not in seen]
 
-        if new_entries:
-            # send oldest first
-            for entry in reversed(new_entries):
-                text = format_message(entry)
-                ok = send_telegram(text)
-                log.info("Sent OTP to channel: %s (ok=%s)", entry.get("dt"), ok)
+        if new:
+            for entry in reversed(new):   # oldest first
+                fp = fingerprint(entry)
+                ok = send_telegram(format_message(entry))
+                seen.add(fp)
+                log.info("Sent OTP | dt=%s | num=%s | ok=%s",
+                         entry.get("dt"), entry.get("num"), ok)
         else:
             log.debug("No new OTPs.")
 
