@@ -42,21 +42,53 @@ def fetch_otps() -> list:
 
 
 def extract_otp(message: str) -> str:
-    """Message se OTP/code extract karta hai."""
-    match = re.search(r'\b(\d{4,8})\b', message or "")
-    return match.group(1) if match else "N/A"
+    """
+    SMS se OTP automatically detect karta hai.
+    Pehle keyword ke paas wala number dhundhta hai,
+    phir fallback mein koi bhi 4-8 digit number.
+    """
+    if not message:
+        return None
+
+    # Strategy 1: OTP/code/verification keyword ke baad wala number
+    pattern_keyword = r'(?:otp|code|verification code|verify|pin|password|token)[^\d]*(\d{4,8})'
+    match = re.search(pattern_keyword, message, re.IGNORECASE)
+    if match:
+        return match.group(1)
+
+    # Strategy 2: "is" ya ":" ke baad wala number
+    pattern_is = r'(?:is|:|are)[^\d]*(\d{4,8})'
+    match = re.search(pattern_is, message, re.IGNORECASE)
+    if match:
+        return match.group(1)
+
+    # Strategy 3: Fallback — koi bhi 4-8 digit standalone number
+    match = re.search(r'\b(\d{4,8})\b', message)
+    if match:
+        return match.group(1)
+
+    return None
 
 
 def format_message(entry: dict) -> str:
-    otp = extract_otp(entry.get("message", ""))
+    raw_message = entry.get("message", "N/A")
+    otp = extract_otp(raw_message)
+
+    # OTP wala section — detect hua toh highlight, nahi toh skip
+    otp_section = (
+        f"🔐 <b>OTP Detected:</b>\n"
+        f"➡️  <code>{otp}</code>\n\n"
+    ) if otp else ""
+
     return (
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "🚀 <b>New OTP Arrived</b>\n"
+        "🚀 <b>New Message Arrived</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📱 <b>Service:</b>  {entry.get('cli', 'N/A')}\n"
         f"📞 <b>Number:</b>  <code>{entry.get('num', 'N/A')}</code>\n\n"
-        "🔐 <b>Your OTP:</b>\n"
-        f"➡️  <code>{otp}</code>\n\n"
+        f"{otp_section}"
+        f"💬 <b>Full Message:</b>\n"
+        f"{raw_message}\n\n"
         f"🕒 <b>Time:</b>  {entry.get('dt', 'N/A')}\n\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "⚡ <i>Auto-detected &amp; delivered instantly</i>\n"
@@ -64,19 +96,19 @@ def format_message(entry: dict) -> str:
     )
 
 
-def send_telegram(text: str, otp: str = None) -> bool:
+def send_telegram(text: str, copy_text: str = None) -> bool:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id":    CHANNEL_ID,
         "text":       text,
         "parse_mode": "HTML",
     }
-    if otp and otp != "N/A":
+    if copy_text:
         payload["reply_markup"] = {
             "inline_keyboard": [[
                 {
                     "text": "📋 Copy OTP",
-                    "copy_text": {"text": otp}
+                    "copy_text": {"text": copy_text}
                 }
             ]]
         }
@@ -96,11 +128,10 @@ def fingerprint(entry: dict) -> str:
 def main():
     log.info("🤖 Bot started. Polling every %ds ...", POLL_SECONDS)
 
-    # Startup pe existing records prime karo, bhejo mat
     initial = fetch_otps()
     for entry in initial:
         seen.add(fingerprint(entry))
-    log.info("Primed %d existing records. Waiting for new OTPs...", len(seen))
+    log.info("Primed %d existing records. Waiting for new messages...", len(seen))
 
     while True:
         time.sleep(POLL_SECONDS)
@@ -109,14 +140,17 @@ def main():
         new = [r for r in records if fingerprint(r) not in seen]
 
         if new:
-            for entry in reversed(new):  # oldest first
+            for entry in reversed(new):
                 otp = extract_otp(entry.get("message", ""))
-                ok  = send_telegram(format_message(entry), otp=otp)
+                ok  = send_telegram(
+                    text=format_message(entry),
+                    copy_text=otp  # OTP mila toh copy button mein wahi, nahi toh button nahi aayega
+                )
                 seen.add(fingerprint(entry))
                 log.info("Sent | dt=%s | num=%s | otp=%s | ok=%s",
                          entry.get("dt"), entry.get("num"), otp, ok)
         else:
-            log.debug("No new OTPs.")
+            log.debug("No new messages.")
 
 
 if __name__ == "__main__":
