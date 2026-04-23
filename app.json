@@ -1,20 +1,16 @@
 {
   "name": "OTP Telegram Bot",
-  "description": "Polls CR API every 5 seconds and forwards new OTPs to a Telegram channel",
-  "keywords": ["python", "telegram", "bot", "otp"],
+  "description": "Polls CR API every 5 seconds, sends new OTPs to Telegram channel",
   "formation": {
-    "worker": {
-      "quantity": 1,
-      "size": "eco"
-    }
+    "worker": { "quantity": 1, "size": "eco" }
   },
   "env": {
     "TELEGRAM_BOT_TOKEN": {
-      "description": "Your Telegram Bot token from @BotFather",
+      "description": "Bot token from @BotFather",
       "required": true
     },
     "TELEGRAM_CHANNEL_ID": {
-      "description": "Numeric channel ID (e.g. -1001234567890). NOT @handle.",
+      "description": "Numeric channel ID e.g. -1001234567890",
       "required": true
     },
     "CR_API_TOKEN": {
@@ -22,9 +18,5 @@
       "required": true
     }
   },
-  "buildpacks": [
-    {
-      "url": "heroku/python"
-    }
-  ]
+  "buildpacks": [{ "url": "heroku/python" }]
 }
