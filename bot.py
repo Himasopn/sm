@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import requests
 import logging
@@ -20,11 +21,10 @@ POLL_SECONDS  = 5
 FETCH_RECORDS = 50
 
 # ── STATE ─────────────────────────────────────────────────────────────────────
-seen: set = set()   # fingerprints of already-sent OTPs
+seen: set = set()
 
 
 def fetch_otps() -> list:
-    """Fetch latest records from CR API — no date filter needed."""
     params = {
         "token":   CR_API_TOKEN,
         "records": FETCH_RECORDS,
@@ -41,14 +41,47 @@ def fetch_otps() -> list:
     return []
 
 
-def send_telegram(text: str) -> bool:
+def extract_otp(message: str) -> str:
+    """Message se OTP/code extract karta hai."""
+    match = re.search(r'\b(\d{4,8})\b', message or "")
+    return match.group(1) if match else "N/A"
+
+
+def format_message(entry: dict) -> str:
+    otp = extract_otp(entry.get("message", ""))
+    return (
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "🚀 <b>New OTP Arrived</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📱 <b>Service:</b>  {entry.get('cli', 'N/A')}\n"
+        f"📞 <b>Number:</b>  <code>{entry.get('num', 'N/A')}</code>\n\n"
+        "🔐 <b>Your OTP:</b>\n"
+        f"➡️  <code>{otp}</code>\n\n"
+        f"🕒 <b>Time:</b>  {entry.get('dt', 'N/A')}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "⚡ <i>Auto-detected &amp; delivered instantly</i>\n"
+        "🤖 <i>Bot: WITHIN SMS</i>"
+    )
+
+
+def send_telegram(text: str, otp: str = None) -> bool:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id":    CHANNEL_ID,
+        "text":       text,
+        "parse_mode": "HTML",
+    }
+    if otp and otp != "N/A":
+        payload["reply_markup"] = {
+            "inline_keyboard": [[
+                {
+                    "text": "📋 Copy OTP",
+                    "copy_text": {"text": otp}
+                }
+            ]]
+        }
     try:
-        resp = requests.post(url, json={
-            "chat_id":    CHANNEL_ID,
-            "text":       text,
-            "parse_mode": "HTML",
-        }, timeout=15)
+        resp = requests.post(url, json=payload, timeout=15)
         resp.raise_for_status()
         return True
     except Exception as e:
@@ -60,27 +93,15 @@ def fingerprint(entry: dict) -> str:
     return f"{entry.get('dt')}|{entry.get('num')}|{entry.get('message')}"
 
 
-def format_message(entry: dict) -> str:
-    return (
-        "📩 <b>New OTP</b>\n"
-        f"🕐 <b>Time:</b> {entry.get('dt', 'N/A')}\n"
-        f"📱 <b>Number:</b> <code>{entry.get('num', 'N/A')}</code>\n"
-        f"🔖 <b>Sender:</b> {entry.get('cli', 'N/A')}\n"
-        f"💬 <b>Message:</b> {entry.get('message', 'N/A')}\n"
-        f"💰 <b>Payout:</b> {entry.get('payout', 'N/A')}"
-    )
-
-
 def main():
     log.info("🤖 Bot started. Polling every %ds ...", POLL_SECONDS)
 
-    # ── Prime on startup: mark existing records as seen, don't send them ──────
+    # Startup pe existing records prime karo, bhejo mat
     initial = fetch_otps()
     for entry in initial:
         seen.add(fingerprint(entry))
     log.info("Primed %d existing records. Waiting for new OTPs...", len(seen))
 
-    # ── Main poll loop ─────────────────────────────────────────────────────────
     while True:
         time.sleep(POLL_SECONDS)
         records = fetch_otps()
@@ -88,12 +109,12 @@ def main():
         new = [r for r in records if fingerprint(r) not in seen]
 
         if new:
-            for entry in reversed(new):   # oldest first
-                fp = fingerprint(entry)
-                ok = send_telegram(format_message(entry))
-                seen.add(fp)
-                log.info("Sent OTP | dt=%s | num=%s | ok=%s",
-                         entry.get("dt"), entry.get("num"), ok)
+            for entry in reversed(new):  # oldest first
+                otp = extract_otp(entry.get("message", ""))
+                ok  = send_telegram(format_message(entry), otp=otp)
+                seen.add(fingerprint(entry))
+                log.info("Sent | dt=%s | num=%s | otp=%s | ok=%s",
+                         entry.get("dt"), entry.get("num"), otp, ok)
         else:
             log.debug("No new OTPs.")
 
