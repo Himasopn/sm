@@ -16,7 +16,7 @@ CHANNEL_ID   = os.environ["TELEGRAM_CHANNEL_ID"]
 CR_API_TOKEN = os.environ["CR_API_TOKEN"]
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
-API_URL       = "http://147.135.212.197/crapi/time/viewstats"
+API_URL       = "http://51.77.216.195/crapi/lamix/viewstats"
 POLL_SECONDS  = 1
 FETCH_RECORDS = 50
 
@@ -96,7 +96,7 @@ def send_telegram(text: str, copy_text: str = None) -> bool:
         payload["reply_markup"] = {
             "inline_keyboard": [[
                 {
-                    "text": "📋 Copy OTP",
+                    "text": "🤍 Copy OTP",
                     "copy_text": {"text": copy_text}
                 }
             ]]
