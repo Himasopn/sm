@@ -17,7 +17,7 @@ CR_API_TOKEN = os.environ["CR_API_TOKEN"]
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
 API_URL       = "http://51.77.216.195/crapi/lamix/viewstats"
-POLL_SECONDS  = 1
+POLL_SECONDS  = 3
 FETCH_RECORDS = 50
 
 # ── STATE ─────────────────────────────────────────────────────────────────────
